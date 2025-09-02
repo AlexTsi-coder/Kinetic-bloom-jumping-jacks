@@ -1,20 +1,27 @@
 <!DOCTYPE html>
 <html lang="el">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>AI Jumping Jacks Coach</title>
   <style>
-    body{margin:0;background:#000;font-family:sans-serif;overflow:hidden}
-    #container{position:relative;width:100%;height:100vh}
-    #webcam,#output{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-    #counter{position:absolute;top:20px;left:50%;transform:translateX(-50%);font-size:3em;color:#fff;text-shadow:2px 2px 6px #000;z-index:20}
-    .feedback-line{position:absolute;left:50%;transform:translateX(-50%);color:#fff;padding:8px 14px;border-radius:8px;font-size:1.3em;font-weight:bold;z-index:25;white-space:nowrap;text-shadow:1px 1px 4px #000;backdrop-filter:blur(4px)}
-    #feedback-action{bottom:120px;background:rgba(0,102,204,0.9)}
-    #feedback-technique{bottom:70px}
+    body {margin:0;background:#000;font-family:sans-serif;overflow:hidden}
+    #container {position:relative;width:100%;height:100vh}
+    #webcam,#output {position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    #counter {
+      position:absolute;top:20px;left:50%;transform:translateX(-50%);
+      font-size:3em;color:#fff;text-shadow:2px 2px 6px #000;z-index:20
+    }
+    .feedback-line {
+      position:absolute;left:50%;transform:translateX(-50%);
+      color:#fff;padding:8px 14px;border-radius:8px;
+      font-size:1.3em;font-weight:bold;z-index:25;white-space:nowrap;
+      text-shadow:1px 1px 4px #000;backdrop-filter:blur(4px)
+    }
+    #feedback-action {bottom:120px;background:rgba(0,102,204,0.9)}
+    #feedback-technique {bottom:70px;background:rgba(0,153,51,0.9)}
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
 </head>
 <body>
 <div id="container">
@@ -25,26 +32,82 @@
   <div id="feedback-technique" class="feedback-line"></div>
 </div>
 <script>
-const video=document.getElementById('webcam'),canvas=document.getElementById('output'),ctx=canvas.getContext('2d');
-const counterDiv=document.getElementById('counter'),feedbackAction=document.getElementById('feedback-action'),feedbackTechnique=document.getElementById('feedback-technique');
-let detector,smoothKP=null;const EMA_ALPHA=0.35;let jackCount=0,inOpen=false;
+const video=document.getElementById('webcam'),
+      canvas=document.getElementById('output'),
+      ctx=canvas.getContext('2d'),
+      counterDiv=document.getElementById('counter'),
+      feedbackAction=document.getElementById('feedback-action'),
+      feedbackTechnique=document.getElementById('feedback-technique');
 
-async function setupWebcam(){const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"}});video.srcObject=stream;await video.play();}
-async function loadModel(){detector=await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet,{modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING});}
-function lerp(a,b,t){return a+(b-a)*t;}
-function emaKeypoints(prev,curr,a){if(!prev)return curr.map(p=>({...p}));return curr.map((p,i)=>{const q=prev[i]||p;return {...p,x:lerp(q.x,p.x,a),y:lerp(q.y,p.y,a)}});}
+let detector,jackCount=0,inOpen=false;
+
+async function setupWebcam(){
+  const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"}});
+  video.srcObject=stream;
+  return new Promise(res=>video.onloadedmetadata=()=>{video.play();res();});
+}
+
+async function loadModel(){
+  detector=await poseDetection.createDetector(
+    poseDetection.SupportedModels.MoveNet,
+    {modelType:'SinglePose.Lightning'}
+  );
+}
+
 function distance(p1,p2){return Math.hypot(p1.x-p2.x,p1.y-p2.y);}
-function checkForm(kp){if(!kp[5]||!kp[6]||!kp[11]||!kp[12])return{ok:false,msg:"Μπες στο κάδρο"};const shoulderW=distance(kp[5],kp[6]);const legGap=distance(kp[11],kp[12]);if(legGap<shoulderW*0.5)return{ok:true,msg:"Κλείσε πόδια καλά"};if(legGap>shoulderW*2.2)return{ok:true,msg:"Μην ανοίγεις υπερβολικά"};return{ok:true,msg:"Καλή στάση!"};}
+
+function checkForm(kp){
+  const shoulderW=distance(kp[5],kp[6]);
+  const legGap=distance(kp[11],kp[12]);
+  if(legGap<shoulderW*0.5) return "Κλείσε καλά τα πόδια";
+  if(legGap>shoulderW*2.2) return "Μην ανοίγεις υπερβολικά";
+  return "Καλή στάση!";
+}
 
 async function loop(){
   const poses=await detector.estimatePoses(video,{flipHorizontal:true});
-  if(poses.length){smoothKP=emaKeypoints(smoothKP,poses[0].keypoints,EMA_ALPHA);
-    const {ok,msg}=checkForm(smoothKP);feedbackTechnique.textContent=msg;feedbackTechnique.style.backgroundColor=ok?"rgba(0,153,51,0.9)":"rgba(204,0,0,0.9)";
-    if(ok){const legGap=distance(smoothKP[11],smoothKP[12]);const shoulderW=distance(smoothKP[5],smoothKP[6]);if(!inOpen&&legGap>shoulderW*1.8){inOpen=true;feedbackAction.textContent="Ανοίγεις";}if(inOpen&&legGap<shoulderW*0.8){jackCount++;inOpen=false;feedbackAction.textContent="Κλείνεις";}}else feedbackAction.textContent="Διόρθωσε";counterDiv.textContent=jackCount;drawPose({keypoints:smoothKP});}
+  if(poses.length){
+    const kp=poses[0].keypoints;
+    if(kp[5]&&kp[6]&&kp[11]&&kp[12]){
+      const shoulderW=distance(kp[5],kp[6]);
+      const legGap=distance(kp[11],kp[12]);
+
+      feedbackTechnique.textContent=checkForm(kp);
+
+      if(!inOpen && legGap>shoulderW*1.8){
+        inOpen=true; feedbackAction.textContent="Ανοίγεις";
+      }
+      if(inOpen && legGap<shoulderW*0.8){
+        jackCount++; inOpen=false;
+        feedbackAction.textContent="Κλείνεις";
+      }
+      counterDiv.textContent=jackCount;
+    }
+    drawPose(kp);
+  }
   requestAnimationFrame(loop);
 }
-function drawPose(pose){ctx.clearRect(0,0,canvas.width,canvas.height);canvas.width=video.videoWidth;canvas.height=video.videoHeight;ctx.drawImage(video,0,0,canvas.width,canvas.height);pose.keypoints.forEach(k=>{if(k.score>0.4){ctx.beginPath();ctx.arc(k.x,k.y,5,0,2*Math.PI);ctx.fillStyle="yellow";ctx.fill();}});}
-(async()=>{await setupWebcam();await loadModel();loop();})();
+
+function drawPose(keypoints){
+  canvas.width=video.videoWidth;
+  canvas.height=video.videoHeight;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  keypoints.forEach(k=>{
+    if(k.score>0.4){
+      ctx.beginPath();
+      ctx.arc(k.x,k.y,5,0,2*Math.PI);
+      ctx.fillStyle="yellow";
+      ctx.fill();
+    }
+  });
+}
+
+(async()=>{
+  await setupWebcam();
+  await loadModel();
+  loop();
+})();
 </script>
 </body>
 </html>
