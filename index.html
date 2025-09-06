@@ -45,12 +45,10 @@
       white-space: nowrap;
       z-index: 35;
     }
-    /* Πρώτη γραμμή: οδηγίες δράσης */
     #action {
       bottom: 120px;
       background: rgba(0, 102, 204, 0.85);
     }
-    /* Δεύτερη γραμμή: τεχνική */
     #technique {
       bottom: 70px;
       background: rgba(0, 0, 0, 0.65);
@@ -94,13 +92,8 @@ async function loadModel(){
 
 function checkTechnique(kp){
   if(kp.length<17) return "Φανερώσου ολόκληρος στο κάδρο!";
-  const lAnkle=kp[15],rAnkle=kp[16],
-        lWrist=kp[9],rWrist=kp[10];
-  if([lAnkle,rAnkle,lWrist,rWrist].some(p=>!p||p.score<0.4))
-    return "Φανερώσου ολόκληρος στο κάδρο!";
-  // Έλεγχος συμμετρίας
-  if(Math.abs(lAnkle.y-rAnkle.y)>50) return "Ισορρόπησε τα πόδια!";
-  if(Math.abs(lWrist.y-rWrist.y)>80) return "Κράτα τα χέρια συμμετρικά!";
+  const nose=kp[0],lAnkle=kp[15],rAnkle=kp[16];
+  if([nose,lAnkle,rAnkle].some(p=>!p||p.score<0.4)) return "Φανερώσου ολόκληρος στο κάδρο!";
   return "Τέλεια τεχνική!";
 }
 
@@ -108,29 +101,28 @@ async function detect(){
   const poses=await detector.estimatePoses(video);
   if(poses.length>0){
     const kp=poses[0].keypoints,
+          lWrist=kp[9],rWrist=kp[10],
           lAnkle=kp[15],rAnkle=kp[16],
-          lWrist=kp[9],rWrist=kp[10];
-    if(lAnkle&&rAnkle&&lWrist&&rWrist&&
-       lAnkle.score>0.4&&rAnkle.score>0.4&&
-       lWrist.score>0.4&&rWrist.score>0.4){
+          nose=kp[0];
+    if(lWrist&&rWrist&&lAnkle&&rAnkle&&nose &&
+       lWrist.score>0.4&&rWrist.score>0.4&&
+       lAnkle.score>0.4&&rAnkle.score>0.4&&nose.score>0.4){
 
-      const ankleDist=Math.abs(lAnkle.x-rAnkle.x);
-      const wristHeight=(lWrist.y+rWrist.y)/2;
-      const head=kp[0];
+      const handsUp=(lWrist.y<nose.y && rWrist.y<nose.y);
+      const feetApart=(Math.abs(lAnkle.x-rAnkle.x)>200);
 
-      // Κριτήριο "open" όταν πόδια ανοιχτά και χέρια ψηλά
-      if(ankleDist>250 && wristHeight<head.y && state==="closed"){
+      if(handsUp&&feetApart&&state==="closed"){
         state="open";
-        action.textContent="Άνοιξε!";
+        action.textContent="Κλείσε χέρια–πόδια!";
       }
-      // Κριτήριο "closed" όταν πόδια κοντά και χέρια χαμηλά
-      else if(ankleDist<150 && wristHeight>head.y+100 && state==="open"){
+      else if(!handsUp&&!feetApart&&state==="open"){
         state="closed";
         count++;
         counter.textContent=count;
-        action.textContent="Κλείσε!";
+        action.textContent="Άνοιξε χέρια–πόδια!";
       }
     }
+
     const tMsg=checkTechnique(kp);
     tech.textContent=tMsg;
     tech.style.background=tMsg==="Τέλεια τεχνική!"?"rgba(0,153,51,0.8)":"rgba(204,0,0,0.8)";
