@@ -4,110 +4,146 @@
   <meta charset="UTF-8">
   <title>AI Jumping Jacks Coach</title>
   <style>
-    body {margin:0;background:#000;font-family:sans-serif;overflow:hidden}
-    #container {position:relative;width:100%;height:100vh}
-    #webcam,#output {position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    body {
+      margin: 0;
+      background: #000;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+    #container {
+      position: relative;
+      width: 100%;
+      height: 100vh;
+    }
+    #webcam, #output {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
     #counter {
-      position:absolute;top:20px;left:50%;transform:translateX(-50%);
-      font-size:3em;color:#fff;text-shadow:2px 2px 6px #000;z-index:20
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 3em;
+      color: #fff;
+      text-shadow: 2px 2px 6px #000;
+      z-index: 30;
     }
-    .feedback-line {
-      position:absolute;left:50%;transform:translateX(-50%);
-      color:#fff;padding:8px 14px;border-radius:8px;
-      font-size:1.3em;font-weight:bold;z-index:25;white-space:nowrap;
-      text-shadow:1px 1px 4px #000;backdrop-filter:blur(4px)
+    .feedback {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #fff;
+      font-size: 1.4em;
+      font-weight: bold;
+      padding: 10px 18px;
+      border-radius: 6px;
+      text-shadow: 1px 1px 3px #000;
+      max-width: 90%;
+      white-space: nowrap;
+      z-index: 35;
     }
-    #feedback-action {bottom:120px;background:rgba(0,102,204,0.9)}
-    #feedback-technique {bottom:70px;background:rgba(0,153,51,0.9)}
+    /* Πρώτη γραμμή: οδηγίες δράσης */
+    #action {
+      bottom: 120px;
+      background: rgba(0, 102, 204, 0.85);
+    }
+    /* Δεύτερη γραμμή: τεχνική */
+    #technique {
+      bottom: 70px;
+      background: rgba(0, 0, 0, 0.65);
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
 </head>
 <body>
 <div id="container">
   <video id="webcam" playsinline muted></video>
   <canvas id="output"></canvas>
   <div id="counter">0</div>
-  <div id="feedback-action" class="feedback-line"></div>
-  <div id="feedback-technique" class="feedback-line"></div>
+  <div id="action" class="feedback"></div>
+  <div id="technique" class="feedback"></div>
 </div>
 <script>
 const video=document.getElementById('webcam'),
       canvas=document.getElementById('output'),
       ctx=canvas.getContext('2d'),
-      counterDiv=document.getElementById('counter'),
-      feedbackAction=document.getElementById('feedback-action'),
-      feedbackTechnique=document.getElementById('feedback-technique');
+      counter=document.getElementById('counter'),
+      action=document.getElementById('action'),
+      tech=document.getElementById('technique');
 
-let detector,jackCount=0,inOpen=false;
+let detector,state="closed",count=0;
 
-async function setupWebcam(){
-  const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"}});
-  video.srcObject=stream;
-  return new Promise(res=>video.onloadedmetadata=()=>{video.play();res();});
+async function setupCam(){
+  const s=await navigator.mediaDevices.getUserMedia({video:true});
+  video.srcObject=s;
+  return new Promise(r=>{video.onloadedmetadata=()=>{video.play();r(video);};});
 }
 
 async function loadModel(){
   detector=await poseDetection.createDetector(
     poseDetection.SupportedModels.MoveNet,
-    {modelType:'SinglePose.Lightning'}
+    {modelType:poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING}
   );
+  detect();
 }
 
-function distance(p1,p2){return Math.hypot(p1.x-p2.x,p1.y-p2.y);}
-
-function checkForm(kp){
-  const shoulderW=distance(kp[5],kp[6]);
-  const legGap=distance(kp[11],kp[12]);
-  if(legGap<shoulderW*0.5) return "Κλείσε καλά τα πόδια";
-  if(legGap>shoulderW*2.2) return "Μην ανοίγεις υπερβολικά";
-  return "Καλή στάση!";
+function checkTechnique(kp){
+  if(kp.length<17) return "Φανερώσου ολόκληρος στο κάδρο!";
+  const lAnkle=kp[15],rAnkle=kp[16],
+        lWrist=kp[9],rWrist=kp[10];
+  if([lAnkle,rAnkle,lWrist,rWrist].some(p=>!p||p.score<0.4))
+    return "Φανερώσου ολόκληρος στο κάδρο!";
+  // Έλεγχος συμμετρίας
+  if(Math.abs(lAnkle.y-rAnkle.y)>50) return "Ισορρόπησε τα πόδια!";
+  if(Math.abs(lWrist.y-rWrist.y)>80) return "Κράτα τα χέρια συμμετρικά!";
+  return "Τέλεια τεχνική!";
 }
 
-async function loop(){
-  const poses=await detector.estimatePoses(video,{flipHorizontal:true});
-  if(poses.length){
-    const kp=poses[0].keypoints;
-    if(kp[5]&&kp[6]&&kp[11]&&kp[12]){
-      const shoulderW=distance(kp[5],kp[6]);
-      const legGap=distance(kp[11],kp[12]);
+async function detect(){
+  const poses=await detector.estimatePoses(video);
+  if(poses.length>0){
+    const kp=poses[0].keypoints,
+          lAnkle=kp[15],rAnkle=kp[16],
+          lWrist=kp[9],rWrist=kp[10];
+    if(lAnkle&&rAnkle&&lWrist&&rWrist&&
+       lAnkle.score>0.4&&rAnkle.score>0.4&&
+       lWrist.score>0.4&&rWrist.score>0.4){
 
-      feedbackTechnique.textContent=checkForm(kp);
+      const ankleDist=Math.abs(lAnkle.x-rAnkle.x);
+      const wristHeight=(lWrist.y+rWrist.y)/2;
+      const head=kp[0];
 
-      if(!inOpen && legGap>shoulderW*1.8){
-        inOpen=true; feedbackAction.textContent="Ανοίγεις";
+      // Κριτήριο "open" όταν πόδια ανοιχτά και χέρια ψηλά
+      if(ankleDist>250 && wristHeight<head.y && state==="closed"){
+        state="open";
+        action.textContent="Άνοιξε!";
       }
-      if(inOpen && legGap<shoulderW*0.8){
-        jackCount++; inOpen=false;
-        feedbackAction.textContent="Κλείνεις";
+      // Κριτήριο "closed" όταν πόδια κοντά και χέρια χαμηλά
+      else if(ankleDist<150 && wristHeight>head.y+100 && state==="open"){
+        state="closed";
+        count++;
+        counter.textContent=count;
+        action.textContent="Κλείσε!";
       }
-      counterDiv.textContent=jackCount;
     }
-    drawPose(kp);
+    const tMsg=checkTechnique(kp);
+    tech.textContent=tMsg;
+    tech.style.background=tMsg==="Τέλεια τεχνική!"?"rgba(0,153,51,0.8)":"rgba(204,0,0,0.8)";
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    for(let p of kp){if(p.score>0.4){ctx.fillStyle="yellow";ctx.beginPath();ctx.arc(p.x,p.y,5,0,2*Math.PI);ctx.fill();}}
   }
-  requestAnimationFrame(loop);
+  requestAnimationFrame(detect);
 }
 
-function drawPose(keypoints){
-  canvas.width=video.videoWidth;
-  canvas.height=video.videoHeight;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
-  keypoints.forEach(k=>{
-    if(k.score>0.4){
-      ctx.beginPath();
-      ctx.arc(k.x,k.y,5,0,2*Math.PI);
-      ctx.fillStyle="yellow";
-      ctx.fill();
-    }
-  });
-}
-
-(async()=>{
-  await setupWebcam();
-  await loadModel();
-  loop();
-})();
+setupCam();loadModel();
 </script>
 </body>
 </html>
