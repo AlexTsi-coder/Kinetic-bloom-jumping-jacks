@@ -104,18 +104,20 @@ async function detect(){
           lWrist=kp[9],rWrist=kp[10],
           lAnkle=kp[15],rAnkle=kp[16],
           nose=kp[0];
+
     if(lWrist&&rWrist&&lAnkle&&rAnkle&&nose &&
        lWrist.score>0.4&&rWrist.score>0.4&&
        lAnkle.score>0.4&&rAnkle.score>0.4&&nose.score>0.4){
 
-      const handsUp=(lWrist.y<nose.y && rWrist.y<nose.y);
-      const feetApart=(Math.abs(lAnkle.x-rAnkle.x)>200);
+      // thresholds πιο ανεκτικά
+      const handsUp=(lWrist.y < nose.y+40 && rWrist.y < nose.y+40);
+      const feetApart=(Math.abs(lAnkle.x-rAnkle.x) > 160);
 
-      if(handsUp&&feetApart&&state==="closed"){
+      if(handsUp && feetApart && state==="closed"){
         state="open";
         action.textContent="Κλείσε χέρια–πόδια!";
       }
-      else if(!handsUp&&!feetApart&&state==="open"){
+      else if(!handsUp && !feetApart && state==="open"){
         state="closed";
         count++;
         counter.textContent=count;
